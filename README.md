@@ -40,7 +40,9 @@ Follow these steps to run the project on your local machine:
    ```bash
    pip install -r requirements.txt
 
-    Run the project:
--python test_project.py
+2. Run the project: 
+
+   ```bash
+    python test_project.py
 
 
