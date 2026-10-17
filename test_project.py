@@ -16,13 +16,18 @@ logger = logging.getLogger(__name__)
 
 
 class _PredictionResult:
-    def __init__(self, result_queue):
+    def __init__(self, result_queue, prediction_id):
         self.result_queue = result_queue
+        self.prediction_id = prediction_id
+        self.reported = False
 
     def config(self, **options):
         report = options.get("text", "")
         if report.startswith("Report: "):
-            self.result_queue.put(("success", report.removeprefix("Report: ")))
+            self.reported = True
+            self.result_queue.put(
+                (self.prediction_id, "success", report.removeprefix("Report: "))
+            )
 
 
 class create_gui:
@@ -36,6 +41,8 @@ class create_gui:
         self.selected_path = ""
         self.preview_source = None
         self.pending_result_queue = queue.Queue()
+        self.prediction_sequence = 0
+        self.active_prediction_id = None
 
         self.icon = PhotoImage(file='icon.png') if self._safe_load_png('icon.png') is not None else None
         if self.icon is not None:
@@ -106,6 +113,23 @@ class create_gui:
         )
         self.upload_button.pack(fill="x")
 
+        self.clear_button = Button(
+            self.upload_section,
+            text="Reset / Clear",
+            font=("Segoe UI", 10, "bold"),
+            bg="#e2e8f0",
+            fg="#334155",
+            activebackground="#cbd5e1",
+            activeforeground="#1e293b",
+            relief="flat",
+            bd=0,
+            padx=12,
+            pady=9,
+            cursor="hand2",
+            command=self.reset,
+        )
+        self.clear_button.pack(fill="x", pady=(8, 0))
+
         self.status_title = Label(
             self.left_panel,
             text="Status",
@@ -121,8 +145,8 @@ class create_gui:
             self.left_panel,
             textvariable=self.status_var,
             font=("Segoe UI", 11),
-            bg="#203750",
-            fg="#99f6e4",
+            bg="#ccfbf1",
+            fg="#0f766e",
             anchor="w",
             justify="left",
             wraplength=420,
@@ -148,8 +172,8 @@ class create_gui:
             self.left_panel,
             textvariable=self.result_var,
             font=("Segoe UI", 13, "bold"),
-            bg="#203750",
-            fg="#f8fafc",
+            bg="#e2e8f0",
+            fg="#334155",
             anchor="w",
             justify="left",
             wraplength=420,
@@ -179,6 +203,8 @@ class create_gui:
             bg="#f8fafc",
             fg="#1f2937",
             anchor="w",
+            wraplength=500,
+            justify="left",
         )
         self.preview_title.grid(row=0, column=0, sticky="nw", padx=22, pady=(18, 8))
 
@@ -226,23 +252,32 @@ class create_gui:
 
     def set_status(self, message, color="#0f766e"):
         status_colors = {
-            "#0f766e": "#99f6e4",
-            "#dc2626": "#fca5a5",
-            "#1d4ed8": "#93c5fd",
+            "#0f766e": ("#ccfbf1", "#0f766e"),
+            "#dc2626": ("#fee2e2", "#b91c1c"),
+            "#1d4ed8": ("#dbeafe", "#1d4ed8"),
         }
         self.status_var.set(message)
-        self.status_label.configure(fg=status_colors.get(color, color))
+        background, foreground = status_colors.get(color, ("#e2e8f0", color))
+        self.status_label.configure(bg=background, fg=foreground)
+
+    def set_result(self, message, background="#e2e8f0", foreground="#334155"):
+        self.result_var.set(message)
+        self.result_label.configure(bg=background, fg=foreground)
 
     def _poll_result_queue(self):
         try:
             while True:
-                status, result = self.pending_result_queue.get_nowait()
+                prediction_id, status, result = self.pending_result_queue.get_nowait()
+                if prediction_id != self.active_prediction_id:
+                    continue
+
+                self.active_prediction_id = None
                 self.upload_button.configure(state="normal")
                 if status == "success":
-                    self.result_var.set(f"Report: {result}")
+                    self.set_result(f"Report: {result}", "#dcfce7", "#166534")
                     self.set_status("Prediction completed successfully.", "#0f766e")
                 else:
-                    self.result_var.set("Prediction failed")
+                    self.set_result("Prediction failed", "#fee2e2", "#b91c1c")
                     self.set_status(status, "#dc2626")
         except queue.Empty:
             pass
@@ -269,6 +304,7 @@ class create_gui:
         logger.info("Selected image: %s", os.path.basename(x))
         try:
             with Image.open(x) as img:
+                width, height = img.size
                 logger.info(
                     "Selected image details: format=%s size=%s mode=%s",
                     img.format,
@@ -284,6 +320,9 @@ class create_gui:
                 self.preview_label.configure(text="")
                 self._render_preview()
                 self.selected_path = x
+                self.preview_title.configure(
+                    text=f"Selected Image — {os.path.basename(x)} ({width} × {height})"
+                )
 
             self.set_status(
                 f"Image loaded: {os.path.basename(x)}. Ready to analyze.",
@@ -310,31 +349,71 @@ class create_gui:
         self.preview_label.configure(image=preview_image)
         self.preview_label.image = preview_image
 
-    def run_prediction(self, image_path):
+    def detection(self):
+        image_path = self.open_img(None)
+        if not image_path:
+            return
+
+        self.prediction_sequence += 1
+        prediction_id = self.prediction_sequence
+        self.active_prediction_id = prediction_id
+        self.set_result("Processing...", "#dbeafe", "#1d4ed8")
+        self.set_status("Processing image...", "#1d4ed8")
+        self.upload_button.configure(state="disabled")
+
+        thread = threading.Thread(
+            target=self.run_prediction,
+            args=(image_path, prediction_id),
+            daemon=True,
+        )
+        try:
+            thread.start()
+        except RuntimeError:
+            logger.exception("Unable to start the prediction worker.")
+            self.active_prediction_id = None
+            self.upload_button.configure(state="normal")
+            self.set_result("Prediction failed", "#fee2e2", "#b91c1c")
+            self.set_status("Unable to start prediction. Please try again.", "#dc2626")
+
+    def run_prediction(self, image_path, prediction_id):
         started_at = time.perf_counter()
         logger.info("Prediction worker started for %s.", os.path.basename(image_path))
         try:
-            result_label = _PredictionResult(self.pending_result_queue)
+            result_label = _PredictionResult(self.pending_result_queue, prediction_id)
             test2.detect(image_path, result_label)
+            if not result_label.reported:
+                self.pending_result_queue.put(
+                    (
+                        prediction_id,
+                        "The model returned without a prediction result.",
+                        "",
+                    )
+                )
             logger.info(
                 "Prediction worker returned after %.2f seconds.",
                 time.perf_counter() - started_at,
             )
         except Exception:
             logger.exception("Prediction failed.")
-            self.pending_result_queue.put(("The selected image could not be analyzed. Please try a valid RGB image.", ""))
+            self.pending_result_queue.put(
+                (
+                    prediction_id,
+                    "The selected image could not be analyzed. Please try a valid RGB image.",
+                    "",
+                )
+            )
 
-    def detection(self):
-        image_path = self.open_img(None)
-        if not image_path:
-            return
-
-        self.result_var.set("Processing...")
-        self.set_status("Processing image...", "#1d4ed8")
-        self.upload_button.configure(state="disabled")
-
-        thread = threading.Thread(target=self.run_prediction, args=(image_path,), daemon=True)
-        thread.start()
+    def reset(self):
+        self.prediction_sequence += 1
+        self.active_prediction_id = None
+        self.selected_path = ""
+        self.preview_source = None
+        self.preview_title.configure(text="Selected Image")
+        self.preview_label.configure(image="", text="No image selected")
+        self.preview_label.image = None
+        self.set_result("Awaiting image selection")
+        self.set_status("Ready. Select an image to begin analysis.", "#0f766e")
+        self.upload_button.configure(state="normal")
 
 
 window = Tk()
