@@ -16,10 +16,9 @@ logger = logging.getLogger(__name__)
 
 
 class _PredictionResult:
-    def __init__(self, result_queue, prediction_id):
-        self.result_queue = result_queue
-        self.prediction_id = prediction_id
+    def __init__(self):
         self.reported = False
+        self.result = ""
 
     def config(self, **options):
         report = options.get("text", "")
@@ -28,9 +27,7 @@ class _PredictionResult:
             result = report
             while result.startswith("Report: "):
                 result = result.removeprefix("Report: ")
-            self.result_queue.put(
-                (self.prediction_id, "success", result)
-            )
+            self.result = result
 
 
 class create_gui:
@@ -47,6 +44,9 @@ class create_gui:
         self.prediction_sequence = 0
         self.active_prediction_id = None
         self.prediction_worker_running = False
+        self.prediction_worker_id = None
+        self.prediction_thread = None
+        self.pending_prediction_result = None
 
         self.icon = self._safe_load_png("icon.png")
         if self.icon is not None:
@@ -311,28 +311,48 @@ class create_gui:
     def _poll_result_queue(self):
         try:
             while True:
-                prediction_id, status, result = self.pending_result_queue.get_nowait()
-                self.prediction_worker_running = False
-                self.upload_button.configure(state="normal")
-                if prediction_id != self.active_prediction_id:
-                    if self.active_prediction_id is None:
-                        self.set_status(
-                            "Selection cleared. The previous prediction has finished.",
-                            "#0f766e",
-                        )
+                result = self.pending_result_queue.get_nowait()
+                if result[0] != self.prediction_worker_id:
                     continue
 
-                self.active_prediction_id = None
-                if status == "success":
-                    self.set_result(f"Report: {result}", "#dcfce7", "#166534")
-                    self.set_status("Prediction completed successfully.", "#0f766e")
-                else:
-                    self.set_result("Prediction failed", "#fee2e2", "#b91c1c")
-                    self.set_status(status, "#dc2626")
+                self.pending_prediction_result = result
         except queue.Empty:
             pass
 
+        if self.pending_prediction_result is not None:
+            if (
+                self.prediction_thread is None
+                or not self.prediction_thread.is_alive()
+            ):
+                self._finish_prediction(*self.pending_prediction_result)
+                self.pending_prediction_result = None
+
         self.window.after(100, self._poll_result_queue)
+
+    def _finish_prediction(self, prediction_id, status, result):
+        if prediction_id != self.prediction_worker_id:
+            return
+
+        self.prediction_worker_id = None
+        self.prediction_worker_running = False
+        self.prediction_thread = None
+        self.upload_button.configure(state="normal")
+
+        if prediction_id != self.active_prediction_id:
+            if self.active_prediction_id is None:
+                self.set_status(
+                    "Selection cleared. The previous prediction has finished.",
+                    "#0f766e",
+                )
+            return
+
+        self.active_prediction_id = None
+        if status == "success":
+            self.set_result(f"Report: {result}", "#dcfce7", "#166534")
+            self.set_status("Prediction completed successfully.", "#0f766e")
+        else:
+            self.set_result("Prediction failed", "#fee2e2", "#b91c1c")
+            self.set_status(status, "#dc2626")
 
     def openfilename(self):
         filename = filedialog.askopenfilename(
@@ -348,6 +368,7 @@ class create_gui:
         x = self.openfilename()
         if not x:
             logger.info("Image selection cancelled.")
+            self._clear_selection()
             self.set_status("No image selected. Please choose an image to continue.", "#dc2626")
             return ""
 
@@ -381,6 +402,7 @@ class create_gui:
             return x
         except Exception:
             logger.exception("Unable to open the selected image.")
+            self._clear_selection()
             self.set_status("Unable to open the selected file. Please choose a valid image file.", "#dc2626")
             return ""
 
@@ -425,10 +447,15 @@ class create_gui:
         )
         try:
             self.prediction_worker_running = True
+            self.prediction_worker_id = prediction_id
+            self.prediction_thread = thread
+            self.pending_prediction_result = None
             thread.start()
         except RuntimeError:
             logger.exception("Unable to start the prediction worker.")
             self.prediction_worker_running = False
+            self.prediction_worker_id = None
+            self.prediction_thread = None
             self.active_prediction_id = None
             self.upload_button.configure(state="normal")
             self.set_result("Prediction failed", "#fee2e2", "#b91c1c")
@@ -438,9 +465,17 @@ class create_gui:
         started_at = time.perf_counter()
         logger.info("Prediction worker started for %s.", os.path.basename(image_path))
         try:
-            result_label = _PredictionResult(self.pending_result_queue, prediction_id)
+            result_label = _PredictionResult()
             test2.detect(image_path, result_label)
-            if not result_label.reported:
+            logger.info(
+                "Prediction worker returned after %.2f seconds.",
+                time.perf_counter() - started_at,
+            )
+            if result_label.reported:
+                self.pending_result_queue.put(
+                    (prediction_id, "success", result_label.result)
+                )
+            else:
                 self.pending_result_queue.put(
                     (
                         prediction_id,
@@ -448,10 +483,6 @@ class create_gui:
                         "",
                     )
                 )
-            logger.info(
-                "Prediction worker returned after %.2f seconds.",
-                time.perf_counter() - started_at,
-            )
         except Exception:
             logger.exception("Prediction failed.")
             self.pending_result_queue.put(
@@ -462,13 +493,16 @@ class create_gui:
                 )
             )
 
-    def reset(self):
+    def _clear_selection(self):
         self.prediction_sequence += 1
         self.active_prediction_id = None
         self.selected_path = ""
         self.preview_source = None
         self.preview_title.configure(text="Selected Image")
-        self.preview_label.configure(image="", text="No image selected")
+        self.preview_label.configure(
+            image="",
+            text="Choose Upload Image to display a preview.",
+        )
         self.preview_label.image = None
         self.set_result("Awaiting image selection")
         self.upload_button.configure(
