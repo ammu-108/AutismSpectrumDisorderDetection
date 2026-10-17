@@ -36,7 +36,7 @@ class create_gui:
         self.window.title("Autism Spectrum Disorder Detection")
         self.window.geometry("1180x760")
         self.window.minsize(980, 700)
-        self.window.configure(bg="#edf2f7")
+        self.window.configure(bg="#f4f2fa")
 
         self.selected_path = ""
         self.preview_source = None
@@ -44,19 +44,19 @@ class create_gui:
         self.prediction_sequence = 0
         self.active_prediction_id = None
 
-        self.icon = PhotoImage(file='icon.png') if self._safe_load_png('icon.png') is not None else None
+        self.icon = self._safe_load_png("icon.png")
         if self.icon is not None:
             self.window.iconphoto(True, self.icon)
 
-        self.header = Frame(self.window, bg="#edf2f7")
+        self.header = Frame(self.window, bg="#f4f2fa")
         self.header.pack(fill="x", padx=28, pady=(24, 18))
 
         self.title = Label(
             self.header,
             text="Autism Spectrum Disorder Detection",
             font=("Segoe UI", 24, "bold"),
-            bg="#edf2f7",
-            fg="#14213d",
+            bg="#f4f2fa",
+            fg="#382b59",
             anchor="w",
         )
         self.title.pack(anchor="w")
@@ -65,23 +65,23 @@ class create_gui:
             self.header,
             text="Upload a valid image and run the current model analysis.",
             font=("Segoe UI", 11),
-            bg="#edf2f7",
+            bg="#f4f2fa",
             fg="#475569",
             anchor="w",
         )
         self.subtitle.pack(anchor="w", pady=(6, 0))
 
-        self.content = Frame(self.window, bg="#edf2f7")
+        self.content = Frame(self.window, bg="#f4f2fa")
         self.content.pack(fill="both", expand=True, padx=28, pady=(0, 28))
 
         self.content.grid_columnconfigure(0, weight=1)
         self.content.grid_columnconfigure(1, weight=1)
         self.content.grid_rowconfigure(0, weight=1)
 
-        self.left_panel = Frame(self.content, bg="#14263d", highlightbackground="#14263d", highlightthickness=1)
+        self.left_panel = Frame(self.content, bg="#f0edfa", highlightbackground="#d8d1e8", highlightthickness=1)
         self.left_panel.grid(row=0, column=0, sticky="nsew", padx=(0, 18))
 
-        self.preview_panel = Frame(self.content, bg="#f8fafc", highlightbackground="#d7e0ea", highlightthickness=1)
+        self.preview_panel = Frame(self.content, bg="#fdfcff", highlightbackground="#d8d1e8", highlightthickness=1)
         self.preview_panel.grid(row=0, column=1, sticky="nsew")
 
         self.left_panel.grid_columnconfigure(0, weight=1)
@@ -90,7 +90,7 @@ class create_gui:
         self.preview_panel.grid_columnconfigure(0, weight=1)
         self.preview_panel.grid_rowconfigure(1, weight=1)
 
-        self.upload_section = Frame(self.left_panel, bg="#14263d")
+        self.upload_section = Frame(self.left_panel, bg="#f0edfa")
         self.upload_section.grid(row=0, column=0, sticky="ew", padx=28, pady=(26, 20))
 
         self.upload_btn_img = self._load_asset('upload.png', (90, 90))
@@ -100,10 +100,10 @@ class create_gui:
             compound="top",
             text="Upload Image",
             font=("Segoe UI", 12, "bold"),
-            bg="#dff7f3",
-            fg="#0f766e",
-            activebackground="#c8eee7",
-            activeforeground="#115e59",
+            bg="#594781",
+            fg="#ffffff",
+            activebackground="#49396d",
+            activeforeground="#ffffff",
             relief="flat",
             bd=0,
             padx=18,
@@ -112,15 +112,23 @@ class create_gui:
             command=self.detection,
         )
         self.upload_button.pack(fill="x")
+        self.upload_button.bind(
+            "<Enter>",
+            lambda _event: self.upload_button.configure(bg="#49396d"),
+        )
+        self.upload_button.bind(
+            "<Leave>",
+            lambda _event: self.upload_button.configure(bg="#594781"),
+        )
 
         self.clear_button = Button(
             self.upload_section,
             text="Reset / Clear",
             font=("Segoe UI", 10, "bold"),
-            bg="#e2e8f0",
-            fg="#334155",
-            activebackground="#cbd5e1",
-            activeforeground="#1e293b",
+            bg="#e8e3f3",
+            fg="#49396d",
+            activebackground="#d9d0eb",
+            activeforeground="#382b59",
             relief="flat",
             bd=0,
             padx=12,
@@ -128,14 +136,22 @@ class create_gui:
             cursor="hand2",
             command=self.reset,
         )
-        self.clear_button.pack(fill="x", pady=(8, 0))
+        self.clear_button.pack(fill="x", pady=(7, 0))
+        self.clear_button.bind(
+            "<Enter>",
+            lambda _event: self.clear_button.configure(bg="#d9d0eb"),
+        )
+        self.clear_button.bind(
+            "<Leave>",
+            lambda _event: self.clear_button.configure(bg="#e8e3f3"),
+        )
 
         self.status_title = Label(
             self.left_panel,
             text="Status",
             font=("Segoe UI", 12, "bold"),
-            bg="#14263d",
-            fg="#f1f5f9",
+            bg="#f0edfa",
+            fg="#382b59",
             anchor="w",
         )
         self.status_title.grid(row=1, column=0, sticky="w", padx=28, pady=(0, 8))
@@ -145,8 +161,8 @@ class create_gui:
             self.left_panel,
             textvariable=self.status_var,
             font=("Segoe UI", 11),
-            bg="#ccfbf1",
-            fg="#0f766e",
+            bg="#e9e3f5",
+            fg="#594781",
             anchor="w",
             justify="left",
             wraplength=420,
@@ -154,6 +170,8 @@ class create_gui:
             relief="flat",
             padx=14,
             pady=12,
+            highlightbackground="#d8d1e8",
+            highlightthickness=1,
         )
         self.status_label.grid(row=2, column=0, sticky="ew", padx=28, pady=(0, 18))
 
@@ -161,8 +179,8 @@ class create_gui:
             self.left_panel,
             text="Prediction",
             font=("Segoe UI", 12, "bold"),
-            bg="#14263d",
-            fg="#f1f5f9",
+            bg="#f0edfa",
+            fg="#382b59",
             anchor="w",
         )
         self.result_title.grid(row=3, column=0, sticky="w", padx=28, pady=(0, 8))
@@ -172,8 +190,8 @@ class create_gui:
             self.left_panel,
             textvariable=self.result_var,
             font=("Segoe UI", 13, "bold"),
-            bg="#e2e8f0",
-            fg="#334155",
+            bg="#e8e3f3",
+            fg="#49396d",
             anchor="w",
             justify="left",
             wraplength=420,
@@ -181,6 +199,8 @@ class create_gui:
             relief="flat",
             padx=14,
             pady=12,
+            highlightbackground="#d8d1e8",
+            highlightthickness=1,
         )
         self.result_label.grid(row=4, column=0, sticky="ew", padx=28, pady=(0, 20))
 
@@ -188,8 +208,8 @@ class create_gui:
             self.left_panel,
             text="Research demonstration only — not a clinical diagnosis.",
             font=("Segoe UI", 9),
-            bg="#14263d",
-            fg="#aab9ca",
+            bg="#f0edfa",
+            fg="#64748b",
             anchor="w",
             justify="left",
             wraplength=420,
@@ -200,8 +220,8 @@ class create_gui:
             self.preview_panel,
             text="Selected Image",
             font=("Segoe UI", 12, "bold"),
-            bg="#f8fafc",
-            fg="#1f2937",
+            bg="#fdfcff",
+            fg="#382b59",
             anchor="w",
             wraplength=500,
             justify="left",
@@ -210,8 +230,8 @@ class create_gui:
 
         self.preview_container = Frame(
             self.preview_panel,
-            bg="#edf3f8",
-            highlightbackground="#d7e0ea",
+            bg="#f0edfa",
+            highlightbackground="#d8d1e8",
             highlightthickness=1,
         )
         self.preview_container.grid(row=1, column=0, sticky="nsew", padx=22, pady=(0, 22))
@@ -221,7 +241,7 @@ class create_gui:
         self.preview_label = Label(
             self.preview_container,
             text="No image selected",
-            bg="#edf3f8",
+            bg="#f0edfa",
             fg="#64748b",
             font=("Segoe UI", 15, "bold"),
             compound="center",
@@ -252,15 +272,15 @@ class create_gui:
 
     def set_status(self, message, color="#0f766e"):
         status_colors = {
-            "#0f766e": ("#ccfbf1", "#0f766e"),
+            "#0f766e": ("#e9e3f5", "#594781"),
             "#dc2626": ("#fee2e2", "#b91c1c"),
-            "#1d4ed8": ("#dbeafe", "#1d4ed8"),
+            "#1d4ed8": ("#e8e3f3", "#49396d"),
         }
         self.status_var.set(message)
         background, foreground = status_colors.get(color, ("#e2e8f0", color))
         self.status_label.configure(bg=background, fg=foreground)
 
-    def set_result(self, message, background="#e2e8f0", foreground="#334155"):
+    def set_result(self, message, background="#e8e3f3", foreground="#49396d"):
         self.result_var.set(message)
         self.result_label.configure(bg=background, fg=foreground)
 
@@ -357,7 +377,7 @@ class create_gui:
         self.prediction_sequence += 1
         prediction_id = self.prediction_sequence
         self.active_prediction_id = prediction_id
-        self.set_result("Processing...", "#dbeafe", "#1d4ed8")
+        self.set_result("Processing...", "#e8e3f3", "#49396d")
         self.set_status("Processing image...", "#1d4ed8")
         self.upload_button.configure(state="disabled")
 
