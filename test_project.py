@@ -389,31 +389,6 @@ class create_gui:
 
         self.window.after(100, self._poll_result_queue)
 
-    def _finish_prediction(self, prediction_id, status, result):
-        if prediction_id != self.prediction_worker_id:
-            return
-
-        self.prediction_worker_id = None
-        self.prediction_worker_running = False
-        self.prediction_thread = None
-        self.upload_button.configure(state="normal")
-
-        if prediction_id != self.active_prediction_id:
-            if self.active_prediction_id is None:
-                self.set_status(
-                    "Selection cleared. The previous prediction has finished.",
-                    "#0f766e",
-                )
-            return
-
-        self.active_prediction_id = None
-        if status == "success":
-            self.set_result(f"Report: {result}", "#dcfce7", "#166534")
-            self.set_status("Prediction completed successfully.", "#0f766e")
-        else:
-            self.set_result("Prediction failed", "#fee2e2", "#b91c1c")
-            self.set_status(status, "#dc2626")
-
     def openfilename(self):
         filename = filedialog.askopenfilename(
             title="Select an image",
