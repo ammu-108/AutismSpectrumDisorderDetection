@@ -25,8 +25,11 @@ class _PredictionResult:
         report = options.get("text", "")
         if report.startswith("Report: "):
             self.reported = True
+            result = report
+            while result.startswith("Report: "):
+                result = result.removeprefix("Report: ")
             self.result_queue.put(
-                (self.prediction_id, "success", report.removeprefix("Report: "))
+                (self.prediction_id, "success", result)
             )
 
 
@@ -43,6 +46,7 @@ class create_gui:
         self.pending_result_queue = queue.Queue()
         self.prediction_sequence = 0
         self.active_prediction_id = None
+        self.prediction_worker_running = False
 
         self.icon = self._safe_load_png("icon.png")
         if self.icon is not None:
@@ -120,6 +124,26 @@ class create_gui:
             "<Leave>",
             lambda _event: self.upload_button.configure(bg="#594781"),
         )
+
+        self.input_note = Label(
+            self.upload_section,
+            text=(
+                "Upload brain MRI images only. The application does not "
+                "automatically verify MRI content. Research demonstration "
+                "only — not a clinical diagnosis."
+            ),
+            font=("Segoe UI", 9),
+            bg="#f4f0fb",
+            fg="#594d70",
+            anchor="w",
+            justify="left",
+            wraplength=390,
+            padx=12,
+            pady=9,
+            highlightbackground="#d9d0eb",
+            highlightthickness=1,
+        )
+        self.input_note.pack(fill="x", pady=(8, 0))
 
         self.clear_button = Button(
             self.upload_section,
@@ -240,7 +264,7 @@ class create_gui:
 
         self.preview_label = Label(
             self.preview_container,
-            text="No image selected",
+            text="Choose Upload Image to display a preview.",
             bg="#f0edfa",
             fg="#64748b",
             font=("Segoe UI", 15, "bold"),
@@ -288,11 +312,17 @@ class create_gui:
         try:
             while True:
                 prediction_id, status, result = self.pending_result_queue.get_nowait()
+                self.prediction_worker_running = False
+                self.upload_button.configure(state="normal")
                 if prediction_id != self.active_prediction_id:
+                    if self.active_prediction_id is None:
+                        self.set_status(
+                            "Selection cleared. The previous prediction has finished.",
+                            "#0f766e",
+                        )
                     continue
 
                 self.active_prediction_id = None
-                self.upload_button.configure(state="normal")
                 if status == "success":
                     self.set_result(f"Report: {result}", "#dcfce7", "#166534")
                     self.set_status("Prediction completed successfully.", "#0f766e")
@@ -370,6 +400,13 @@ class create_gui:
         self.preview_label.image = preview_image
 
     def detection(self):
+        if self.prediction_worker_running:
+            self.set_status(
+                "A prediction is still finishing. Please wait before starting another.",
+                "#1d4ed8",
+            )
+            return
+
         image_path = self.open_img(None)
         if not image_path:
             return
@@ -387,9 +424,11 @@ class create_gui:
             daemon=True,
         )
         try:
+            self.prediction_worker_running = True
             thread.start()
         except RuntimeError:
             logger.exception("Unable to start the prediction worker.")
+            self.prediction_worker_running = False
             self.active_prediction_id = None
             self.upload_button.configure(state="normal")
             self.set_result("Prediction failed", "#fee2e2", "#b91c1c")
@@ -418,7 +457,7 @@ class create_gui:
             self.pending_result_queue.put(
                 (
                     prediction_id,
-                    "The selected image could not be analyzed. Please try a valid RGB image.",
+                    "Prediction failed. Check that the model file and image are available, then try again.",
                     "",
                 )
             )
@@ -432,8 +471,19 @@ class create_gui:
         self.preview_label.configure(image="", text="No image selected")
         self.preview_label.image = None
         self.set_result("Awaiting image selection")
-        self.set_status("Ready. Select an image to begin analysis.", "#0f766e")
-        self.upload_button.configure(state="normal")
+        self.upload_button.configure(
+            state="disabled" if self.prediction_worker_running else "normal"
+        )
+
+    def reset(self):
+        self._clear_selection()
+        if self.prediction_worker_running:
+            self.set_status(
+                "Selection cleared. Wait for the current prediction to finish before uploading again.",
+                "#1d4ed8",
+            )
+        else:
+            self.set_status("Ready. Select an image to begin analysis.", "#0f766e")
 
 
 window = Tk()
