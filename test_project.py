@@ -14,6 +14,16 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+SUPPORTED_IMAGE_FORMATS = {
+    ".bmp": "BMP",
+    ".gif": "GIF",
+    ".jpeg": "JPEG",
+    ".jpg": "JPEG",
+    ".png": "PNG",
+    ".tif": "TIFF",
+    ".tiff": "TIFF",
+}
+
 
 class _PredictionResult:
     def __init__(self, result_queue, prediction_id):
@@ -43,6 +53,7 @@ class create_gui:
         self.pending_result_queue = queue.Queue()
         self.prediction_sequence = 0
         self.active_prediction_id = None
+        self.prediction_worker_running = False
 
         self.icon = self._safe_load_png("icon.png")
         if self.icon is not None:
@@ -63,7 +74,7 @@ class create_gui:
 
         self.subtitle = Label(
             self.header,
-            text="Upload a valid image and run the current model analysis.",
+            text="Upload a brain MRI image. Other image types may produce meaningless results.",
             font=("Segoe UI", 11),
             bg="#f4f2fa",
             fg="#475569",
@@ -120,6 +131,47 @@ class create_gui:
             "<Leave>",
             lambda _event: self.upload_button.configure(bg="#594781"),
         )
+
+        self.input_note = Frame(
+            self.upload_section,
+            bg="#f4f0fb",
+            highlightbackground="#d9d0eb",
+            highlightthickness=1,
+        )
+        self.input_note.pack(fill="x", pady=(8, 0))
+
+        self.input_note_accent = Frame(self.input_note, bg="#7965a6", width=5)
+        self.input_note_accent.pack(side="left", fill="y")
+        self.input_note_accent.pack_propagate(False)
+
+        self.input_note_content = Frame(self.input_note, bg="#f4f0fb")
+        self.input_note_content.pack(side="left", fill="both", expand=True)
+
+        self.input_note_title = Label(
+            self.input_note_content,
+            text="MRI INPUT REQUIRED",
+            font=("Segoe UI", 10, "bold"),
+            bg="#f4f0fb",
+            fg="#49396d",
+            anchor="w",
+        )
+        self.input_note_title.pack(fill="x", padx=12, pady=(8, 2))
+
+        self.input_note_body = Label(
+            self.input_note_content,
+            text=(
+                "Photographs, screenshots, and unrelated images are unsupported "
+                "and may produce meaningless predictions. MRI content is not "
+                "automatically verified. Research/demo only; not for clinical diagnosis."
+            ),
+            font=("Segoe UI", 10),
+            bg="#f4f0fb",
+            fg="#594d70",
+            anchor="w",
+            justify="left",
+            wraplength=360,
+        )
+        self.input_note_body.pack(fill="x", padx=12, pady=(0, 9))
 
         self.clear_button = Button(
             self.upload_section,
@@ -275,6 +327,7 @@ class create_gui:
             "#0f766e": ("#e9e3f5", "#594781"),
             "#dc2626": ("#fee2e2", "#b91c1c"),
             "#1d4ed8": ("#e8e3f3", "#49396d"),
+            "#b45309": ("#f4f0fb", "#594781"),
         }
         self.status_var.set(message)
         background, foreground = status_colors.get(color, ("#e2e8f0", color))
@@ -288,14 +341,28 @@ class create_gui:
         try:
             while True:
                 prediction_id, status, result = self.pending_result_queue.get_nowait()
+                self.prediction_worker_running = False
+                self.upload_button.configure(state="normal")
                 if prediction_id != self.active_prediction_id:
+                    if self.active_prediction_id is None:
+                        self.set_status(
+                            "Selection cleared. The previous prediction has finished.",
+                            "#0f766e",
+                        )
                     continue
 
                 self.active_prediction_id = None
-                self.upload_button.configure(state="normal")
                 if status == "success":
-                    self.set_result(f"Report: {result}", "#dcfce7", "#166534")
-                    self.set_status("Prediction completed successfully.", "#0f766e")
+                    self.set_result(
+                        f"Unverified model output: {result}",
+                        "#f4f0fb",
+                        "#594781",
+                    )
+                    self.set_status(
+                        "Image readability was checked, but MRI content is not "
+                        "verified. This output is not medically meaningful.",
+                        "#b45309",
+                    )
                 else:
                     self.set_result("Prediction failed", "#fee2e2", "#b91c1c")
                     self.set_status(status, "#dc2626")
@@ -328,6 +395,18 @@ class create_gui:
             return ""
 
         logger.info("Selected image: %s", os.path.basename(x))
+        expected_format = SUPPORTED_IMAGE_FORMATS.get(
+            os.path.splitext(x)[1].lower()
+        )
+        if expected_format is None:
+            self._clear_selection()
+            self.set_status(
+                "Unsupported image extension. Choose a PNG, JPG, JPEG, BMP, "
+                "GIF, TIF, or TIFF file.",
+                "#dc2626",
+            )
+            return ""
+
         if not os.path.isfile(x):
             self._clear_selection()
             self.set_status(
@@ -345,6 +424,11 @@ class create_gui:
                 width, height = img.size
                 if width < 1 or height < 1:
                     raise ValueError("Image dimensions must be greater than zero.")
+                if img.format != expected_format:
+                    raise ValueError(
+                        f"File extension expects {expected_format}, "
+                        f"but image data is {img.format or 'unknown'}."
+                    )
                 logger.info(
                     "Selected image details: format=%s size=%s mode=%s",
                     img.format,
@@ -365,8 +449,9 @@ class create_gui:
                 )
 
             self.set_status(
-                f"Image loaded: {os.path.basename(x)}. Ready to analyze.",
-                "#0f766e",
+                f"Readable image selected: {os.path.basename(x)}. "
+                "MRI content is not verified.",
+                "#b45309",
             )
             return x
         except Exception:
@@ -394,7 +479,11 @@ class create_gui:
         self.preview_label.image = preview_image
 
     def detection(self):
-        if self.active_prediction_id is not None:
+        if self.prediction_worker_running:
+            self.set_status(
+                "A prediction is still finishing. Please wait before selecting another image.",
+                "#1d4ed8",
+            )
             return
 
         image_path = self.open_img(None)
@@ -418,9 +507,11 @@ class create_gui:
             daemon=True,
         )
         try:
+            self.prediction_worker_running = True
             thread.start()
         except RuntimeError:
             logger.exception("Unable to start the prediction worker.")
+            self.prediction_worker_running = False
             self.active_prediction_id = None
             self.upload_button.configure(state="normal")
             self.set_result("Prediction failed", "#fee2e2", "#b91c1c")
@@ -449,7 +540,8 @@ class create_gui:
             self.pending_result_queue.put(
                 (
                     prediction_id,
-                    "Prediction failed. Check that the image is readable and abide.h5 is available.",
+                    "Could not preprocess or analyze the image. Check that it is "
+                    "readable and that abide.h5 is available.",
                     "",
                 )
             )
@@ -463,11 +555,19 @@ class create_gui:
         self.preview_label.configure(image="", text="No image selected")
         self.preview_label.image = None
         self.set_result("Awaiting image selection")
-        self.upload_button.configure(state="normal")
+        self.upload_button.configure(
+            state="disabled" if self.prediction_worker_running else "normal"
+        )
 
     def reset(self):
         self._clear_selection()
-        self.set_status("Ready. Select an image to begin analysis.", "#0f766e")
+        if self.prediction_worker_running:
+            self.set_status(
+                "Selection cleared. Wait for the current prediction to finish before uploading again.",
+                "#1d4ed8",
+            )
+        else:
+            self.set_status("Ready. Select an image to begin analysis.", "#0f766e")
 
 
 window = Tk()
