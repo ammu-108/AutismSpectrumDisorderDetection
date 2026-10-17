@@ -318,13 +318,33 @@ class create_gui:
         x = self.openfilename()
         if not x:
             logger.info("Image selection cancelled.")
-            self.set_status("No image selected. Please choose an image to continue.", "#dc2626")
+            if self.selected_path:
+                self.set_status(
+                    "Image selection cancelled. The previous image is still selected.",
+                    "#1d4ed8",
+                )
+            else:
+                self.set_status("No image selected. Choose an image to begin.", "#dc2626")
             return ""
 
         logger.info("Selected image: %s", os.path.basename(x))
+        if not os.path.isfile(x):
+            self._clear_selection()
+            self.set_status(
+                "The selected file could not be found. Choose another image.",
+                "#dc2626",
+            )
+            return ""
+
         try:
             with Image.open(x) as img:
+                img.verify()
+
+            with Image.open(x) as img:
+                img.load()
                 width, height = img.size
+                if width < 1 or height < 1:
+                    raise ValueError("Image dimensions must be greater than zero.")
                 logger.info(
                     "Selected image details: format=%s size=%s mode=%s",
                     img.format,
@@ -351,7 +371,11 @@ class create_gui:
             return x
         except Exception:
             logger.exception("Unable to open the selected image.")
-            self.set_status("Unable to open the selected file. Please choose a valid image file.", "#dc2626")
+            self._clear_selection()
+            self.set_status(
+                "This file is not a supported, readable image. Choose another image.",
+                "#dc2626",
+            )
             return ""
 
     def _render_preview(self, event=None):
@@ -370,8 +394,15 @@ class create_gui:
         self.preview_label.image = preview_image
 
     def detection(self):
+        if self.active_prediction_id is not None:
+            return
+
         image_path = self.open_img(None)
         if not image_path:
+            return
+        if self.selected_path != image_path or not os.path.isfile(self.selected_path):
+            self._clear_selection()
+            self.set_status("Select a valid image before starting prediction.", "#dc2626")
             return
 
         self.prediction_sequence += 1
@@ -418,12 +449,12 @@ class create_gui:
             self.pending_result_queue.put(
                 (
                     prediction_id,
-                    "The selected image could not be analyzed. Please try a valid RGB image.",
+                    "Prediction failed. Check that the image is readable and abide.h5 is available.",
                     "",
                 )
             )
 
-    def reset(self):
+    def _clear_selection(self):
         self.prediction_sequence += 1
         self.active_prediction_id = None
         self.selected_path = ""
@@ -432,8 +463,11 @@ class create_gui:
         self.preview_label.configure(image="", text="No image selected")
         self.preview_label.image = None
         self.set_result("Awaiting image selection")
-        self.set_status("Ready. Select an image to begin analysis.", "#0f766e")
         self.upload_button.configure(state="normal")
+
+    def reset(self):
+        self._clear_selection()
+        self.set_status("Ready. Select an image to begin analysis.", "#0f766e")
 
 
 window = Tk()
